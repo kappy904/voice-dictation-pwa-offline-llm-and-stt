@@ -2,6 +2,8 @@
 
 This project is a Progressive Web Application (PWA) that provides voice dictation capabilities with a focus on offline functionality. Users can speak, have their voice transcribed in real-time, and then (optionally) process the transcribed text using an offline Large Language Model (LLM) for summarization or proofreading. The application also features a real-time waveform visualization of the user's voice.
 
+![image](https://github.com/user-attachments/assets/f109c5e4-15d9-4041-ab3e-6df957c2d80f)
+
 ## Features
 
 *   **Real-time Voice Dictation:** Transcribes speech to text.
