@@ -5,7 +5,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreateMLCEngine, MLCEngine, ChatCompletionChunk } from "@mlc-ai/web-llm";
-import Vosk from "vosk-browser"; // Changed to default import
+import Vosk, {
+    Model as VoskModel,
+    KaldiRecognizer as VoskKaldiRecognizer
+} from "vosk-browser";
 
 // Define a model string - using a small, fast-loading model for initial setup
 // You can find more models at https://mlc.ai/package/
@@ -27,8 +30,8 @@ export default function Home() {
   const llmEngineRef = useRef<MLCEngine | null>(null);
   
   // Refs for Vosk
-  const voskModelRef = useRef<any | null>(null); // Type from Vosk library (Model)
-  const voskRecognizerRef = useRef<any | null>(null); // Type from Vosk library (KaldiRecognizer)
+  const voskModelRef = useRef<VoskModel | null>(null);
+  const voskRecognizerRef = useRef<VoskKaldiRecognizer | null>(null);
   const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
 
   // Refs for Waveform (shared AudioContext and MediaStream)
@@ -71,10 +74,17 @@ export default function Home() {
         const model = await Vosk.createModel(VOSK_MODEL_URL);
         voskModelRef.current = model;
         setVoskStatus("Vosk STT Model Ready.");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         model.on("error", (e: any) => {
-            console.error("Error in Vosk Model:", e);
-            setVoskStatus("Vosk Model Error. Check console.");
-            alert("Vosk STT Model error: " + e.error);
+            if (e && e.event === "error" && typeof e.error === 'string') {
+                console.error("Error in Vosk Model:", e.error);
+                setVoskStatus("Vosk Model Error. Check console.");
+                alert("Vosk STT Model error: " + e.error);
+            } else {
+                console.error("Unknown error in Vosk Model:", e);
+                setVoskStatus("Vosk Model Unknown Error. Check console.");
+                alert("Vosk STT Model unknown error. Check console.");
+            }
         });
       } catch (e) {
         console.error("Failed to load Vosk model:", e);
@@ -147,18 +157,28 @@ export default function Home() {
           voskRecognizerRef.current = new voskModelRef.current.KaldiRecognizer(TARGET_SAMPLE_RATE);
           // voskRecognizerRef.current.setWords(true); // If you need word-level timestamps
 
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           voskRecognizerRef.current.on("result", (message: any) => {
-            setTranscript(prev => prev + message.result.text + " ");
-            setInterimTranscript(""); // Clear interim on final result
+            if (message && message.result && typeof message.result.text === 'string') {
+                setTranscript(prev => prev + message.result.text + " ");
+                setInterimTranscript(""); // Clear interim on final result
+            } else if (message && message.event !== "partialresult") { 
+                 console.log("Received recognizer message (result handler):", message);
+            }
           });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           voskRecognizerRef.current.on("partialresult", (message: any) => {
-            setInterimTranscript(message.result.partial);
+            if (message && message.result && typeof message.result.partial === 'string') {
+                setInterimTranscript(message.result.partial);
+            } else if (message && message.event !== "result") { 
+                console.log("Received recognizer message (partialresult handler):", message);
+            }
           });
           
           audioWorkletNodeRef.current.port.onmessage = (event) => {
             const currentAudioContext = audioContextRef.current;
             if (voskRecognizerRef.current && currentAudioContext && event.data instanceof Float32Array) {
-              let rawAudioData = event.data; // This is Float32Array from worklet
+              const rawAudioData = event.data; // This is Float32Array from worklet
 
               // 1. Resample if necessary (audioData is Float32Array)
               let resampledAudioData = rawAudioData;
