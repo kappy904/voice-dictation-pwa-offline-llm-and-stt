@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreateMLCEngine, MLCEngine, ChatCompletionChunk } from "@mlc-ai/web-llm";
 import { FlickeringGrid } from "@/components/ui/flickering-grid";
-import { Metadata } from 'next';
 
 // Define a model string - using a small, fast-loading model for initial setup
 // You can find more models at https://mlc.ai/package/
@@ -16,10 +15,49 @@ const SELECTED_LLM_MODEL = "Phi-3-mini-4k-instruct-q4f16_1-MLC"; // A very small
 
 // REMOVED: const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-export const metadata: Metadata = {
-  title: "Voice Dictation & LLM Summarizer",
-  description: "A Progressive Web App (PWA) that uses the Web Speech API for voice dictation and a local WebLLM model for text summarization.",
-};
+// Define interfaces for SpeechRecognition
+interface SpeechRecognitionResult {
+  isFinal: boolean;
+  [key: number]: {
+    transcript: string;
+  };
+}
+
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResult[];
+  resultIndex: number;
+  // Add other properties if needed, like error for SpeechRecognitionErrorEvent
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message: string;
+}
+
+interface SpeechRecognitionStatic {
+  new (): SpeechRecognition;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  // Add other methods/properties if used: grammars, onaudiostart, onaudioend, onnomatch, onsoundstart, onsoundend, onspeechstart, onspeechend
+}
+
+// Extend Window interface to include SpeechRecognition and webkitSpeechRecognition
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionStatic;
+    webkitSpeechRecognition?: SpeechRecognitionStatic;
+  }
+}
 
 export default function Home() {
   const [isListening, setIsListening] = useState(false);
@@ -30,7 +68,7 @@ export default function Home() {
   const [llmStatus, setLlmStatus] = useState("LLM Not loaded");
   const [sttStatus, setSttStatus] = useState("STT Ready");
   const [activeTab, setActiveTab] = useState("liveTranscript");
-  const [speechRecognitionSvc, setSpeechRecognitionSvc] = useState<any>(null); // State for SpeechRecognition constructor
+  const [speechRecognitionSvc, setSpeechRecognitionSvc] = useState<SpeechRecognitionStatic | null>(null); // State for SpeechRecognition constructor
 
   const llmEngineRef = useRef<MLCEngine | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -47,8 +85,13 @@ export default function Home() {
   // Effect to initialize SpeechRecognition service on client side
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      setSpeechRecognitionSvc(() => SR); // Use functional update as SR is a constructor
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SR) {
+        setSpeechRecognitionSvc(() => SR); // Use functional update as SR is a constructor
+      } else {
+        console.warn("Web Speech API is not supported by this browser.");
+        setSttStatus("Web Speech API not supported.");
+      }
     }
   }, []);
 
@@ -73,6 +116,52 @@ export default function Home() {
     };
     initLLM();
     return () => { llmEngineRef.current?.unload(); };
+  }, []);
+
+  const drawWaveform = useCallback(() => {
+    if (!analyserRef.current || !dataArrayRef.current || !canvasRef.current) {
+      return;
+    }
+    const analyser = analyserRef.current;
+    const dataArray = dataArrayRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+
+    if (!context) return;
+
+    analyser.getByteTimeDomainData(dataArray);
+
+    const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || "oklch(0.7 0.15 190)";
+    const backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--card').trim() || "oklch(0.2 0.07 250)";
+    
+    context.fillStyle = backgroundColor;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    context.lineWidth = 2.5;
+    context.strokeStyle = primaryColor;
+    context.beginPath();
+
+    const bufferLength = dataArray.length;
+    const sliceWidth = canvas.width / bufferLength;
+    let x = 0;
+
+    context.moveTo(0, canvas.height / 2);
+
+    for (let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128.0;
+      const y = (v * canvas.height) / 2;
+      
+      if (i === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+      x += sliceWidth;
+    }
+
+    context.stroke();
+
+    animationFrameIdRef.current = requestAnimationFrame(drawWaveform);
   }, []);
 
   // useEffect for Audio Processing (Waveform & Web Speech API)
@@ -118,7 +207,7 @@ export default function Home() {
             setSttStatus("Listening...");
           };
 
-          recognition.onresult = (event: any) => {
+          recognition.onresult = (event: SpeechRecognitionEvent) => {
             let finalTranscript = "";
             let currentInterimTranscript = "";
             for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -134,8 +223,8 @@ export default function Home() {
             setInterimTranscript(currentInterimTranscript);
           };
 
-          recognition.onerror = (event: any) => {
-            console.error("Speech recognition error:", event.error);
+          recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+            console.error("Speech recognition error:", event.error, event.message);
             setSttStatus(`STT Error: ${event.error}`);
             if (event.error === 'not-allowed') {
                 alert("Microphone access was denied. Please allow microphone access in your browser settings.");
@@ -192,53 +281,7 @@ export default function Home() {
     };
     setupAudioProcessing();
     return () => { /* Main cleanup in the else block based on isListening */ };
-  }, [isListening, speechRecognitionSvc]);
-
-  const drawWaveform = () => {
-    if (!analyserRef.current || !dataArrayRef.current || !canvasRef.current) {
-      return;
-    }
-    const analyser = analyserRef.current;
-    const dataArray = dataArrayRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext("2d");
-
-    if (!context) return;
-
-    analyser.getByteTimeDomainData(dataArray);
-
-    const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || "oklch(0.7 0.15 190)";
-    const backgroundColor = getComputedStyle(document.documentElement).getPropertyValue('--card').trim() || "oklch(0.2 0.07 250)";
-    
-    context.fillStyle = backgroundColor;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    context.lineWidth = 2.5;
-    context.strokeStyle = primaryColor;
-    context.beginPath();
-
-    const bufferLength = dataArray.length;
-    const sliceWidth = canvas.width / bufferLength;
-    let x = 0;
-
-    context.moveTo(0, canvas.height / 2);
-
-    for (let i = 0; i < bufferLength; i++) {
-      const v = dataArray[i] / 128.0;
-      const y = (v * canvas.height) / 2;
-      
-      if (i === 0) {
-        context.moveTo(x, y);
-      } else {
-        context.lineTo(x, y);
-      }
-      x += sliceWidth;
-    }
-
-    context.stroke();
-
-    animationFrameIdRef.current = requestAnimationFrame(drawWaveform);
-  };
+  }, [isListening, speechRecognitionSvc, drawWaveform]);
 
   const toggleListening = () => {
     if (isListening) {
@@ -312,7 +355,6 @@ export default function Home() {
       setIsProcessingWithLLM(false);
     }
   };
-
   return (
     <div className="futuristic-bg flex flex-col items-center justify-center min-h-screen p-4 md:p-8 text-foreground">
       <FlickeringGrid
