@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CreateMLCEngine, MLCEngine, ChatCompletionChunk } from "@mlc-ai/web-llm";
 import { FlickeringGrid } from "@/components/ui/flickering-grid";
+import { Metadata } from 'next';
 
 // Define a model string - using a small, fast-loading model for initial setup
 // You can find more models at https://mlc.ai/package/
@@ -14,6 +15,11 @@ import { FlickeringGrid } from "@/components/ui/flickering-grid";
 const SELECTED_LLM_MODEL = "Phi-3-mini-4k-instruct-q4f16_1-MLC"; // A very small model for faster testing
 
 // REMOVED: const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+export const metadata: Metadata = {
+  title: "Voice Dictation & LLM Summarizer",
+  description: "A Progressive Web App (PWA) that uses the Web Speech API for voice dictation and a local WebLLM model for text summarization.",
+};
 
 export default function Home() {
   const [isListening, setIsListening] = useState(false);
